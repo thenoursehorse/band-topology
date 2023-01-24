@@ -1,5 +1,6 @@
 import numpy as np
 from itertools import product
+import matplotlib.pyplot as plt
 
 class Lattice(object):
     '''
@@ -26,12 +27,18 @@ class KSpace(object):
         lattice_vectors : A list of vectors that define the unit cell.
     '''
     def __init__(self, lattice_vectors):
-        self.lattice_vectors = lattice_vectors
+        self.lattice_vectors = np.asarray(lattice_vectors)
         self.reciprocal_vectors = 2.0 * np.pi * np.linalg.inv(lattice_vectors).T
+
+        self._k_mesh = None
+        self._nks = None
+        self._nbands = None
 
         self._Hks = None
         self._Eks = None
         self._Vks = None
+        
+        self._k_type = None
 
     def path_k_mesh(self, k_points, n_points=100):
         '''
@@ -53,11 +60,16 @@ class KSpace(object):
             kb = k_points[i+1]
             diff = np.subtract(kb, ka)
             distance = np.sqrt(sum(diff**2))
-            points = np.linspace(start=0, stop=distance, num=n_points, endpoint=True)
+            if i == segments-1:
+                points = np.linspace(start=0, stop=distance, num=n_points, endpoint=True)
+            else:
+                points = np.linspace(start=0, stop=distance, num=n_points, endpoint=False)
             for n in points:
                 k_mesh[k,...] = ka + (n/distance) * diff
                 k += 1
-        return k_mesh
+        self._k_mesh = k_mesh
+        self._k_type = 'path'
+        return self._k_mesh
 
     def hypercubic_k_mesh(self, nk_list=6, shift=False):
         '''
@@ -89,25 +101,56 @@ class KSpace(object):
                 if shift:
                     k_mesh[idx,i] += 0.5/nk_list[i]
         
-        return k_mesh
+        self._k_mesh = k_mesh
+        self._k_type = 'full_bz'
+        return self._k_mesh
     
     def get_Hks(self, Hks_fnc, k_mesh):
+        #ks = np.zeros(shape=k_mesh.shape)
+        #for k in range(ks.shape[0]):
+        #    ks[k] = np.dot(self.reciprocal_vectors, k_mesh[k])
         # ks = G x, but x is a list of vectors, to vectorize the operation we
         # can do instead ks = (k_mesh x.T) because Ax = (x.T A.T).T
         ks = np.dot(k_mesh, self.reciprocal_vectors.T)
-        self._Hks = Hks_fnc(ks)
+        self._Hks = Hks_fnc(ks, self.lattice_vectors)
         self._Eks, self._Vks = np.linalg.eigh(self._Hks)
+        self._nks = self._Eks.shape[0]
+        self._nbands = self._Eks.shape[1]
         return self._Hks
 
-    #FIXME
-    def plot(self):
+    def plot_full_bz(self, ax=None):
         return None
+
+    #FIXME
+    def plot_path(self, ax=None):
+        x = [i for i in range(self.nks)]
+        for n in range(self.nbands):
+            plt.plot(x, self.Eks[:,n])
+        plt.show()
+
+    def plot(self):
+        if self._k_type == 'path':
+            self.plot_path()
+        else:
+            self.plot_full_bz()
 
     def run(self, Hks_fnc, k_mesh=None):
         if k_mesh is None:
             k_mesh = self.hypercubic_k_mesh()
         self.get_Hks(Hks_fnc, k_mesh=k_mesh)
 
+    @property
+    def k_mesh(self):
+        return self._k_mesh
+
+    @property
+    def nks(self):
+        return self._nks
+    
+    @property
+    def nbands(self):
+        return self._nbands
+    
     @property
     def Hks(self):
         return self._Hks
@@ -120,11 +163,11 @@ class KSpace(object):
     def Vks(self):
         return self._Vks
 
-def cubic_kin(ks, t=1, a=1, orb_dim=1):
+def cubic_kin(ks, lattice_vectors, t=1, orb_dim=1):
     di = np.diag_indices(orb_dim)
     nks = ks.shape[0]
     Hks = np.zeros([nks, orb_dim, orb_dim])
-    Hks[:,di[0],di[1]] = -2.0 * t * np.sum(np.cos(a * ks), axis=1)[:, None]
+    Hks[:,di[0],di[1]] = -2.0 * t * np.sum(np.cos(ks), axis=1)[:, None]
     return Hks
 
 cubic_lattice_vectors = [[1,0,0],[0,1,0],[0,0,1]]
@@ -133,6 +176,35 @@ cubic.run(Hks_fnc=cubic_kin)
 
 square_lattice_vectors = [[1,0],[0,1]]
 square = KSpace(lattice_vectors=square_lattice_vectors)
-square_high_symmetry_points = {'G':[0,0], 'X':[1,0], 'M':[1,1]}
-k_path = square.path_k_mesh(k_points=list(square_high_symmetry_points.values()), n_points=100)
+square_high_symmetry_points = {'G':[0,0], 'X':[1,0], 'M':[1,1], 'G2':[0,0]}
+k_path = square.path_k_mesh(k_points=list(square_high_symmetry_points.values()))
 square.run(Hks_fnc=cubic_kin, k_mesh=k_path)
+square.plot()
+
+def honeycomb_kin(ks, lattice_vectors, t=1):
+    a1 = lattice_vectors[0]
+    a2 = lattice_vectors[1]
+    a3 = - (a1 + a2)
+    
+    n1 = (a2 - a1) / 3
+    n2 = (a3 - a2) / 3
+    n3 = (a1 - a3) / 3
+    ni = [n1, n2, n3]
+    
+    gamma = 0
+    for i in range(len(ni)):
+        gamma += np.exp( 1j * np.dot(ks, ni[i]) )
+    
+    orb_dim = 2
+    nks = ks.shape[0]
+    Hks = np.zeros([nks, orb_dim, orb_dim], dtype=np.complex_)
+    Hks[:,0,1] = gamma
+    Hks[:,1,0] = gamma.conj()
+    return Hks
+
+hexagonal_lattice_vectors = [[-0.5, np.sqrt(3)/2], [-0.5, -np.sqrt(3)/2]]
+hexagonal_high_symmetry_points = {'G':[0,0], 'M':[1.0/2.0,0], 'K':[1.0/3.0,1.0/3.0], 'G2':[0,0]}
+honeycomb = KSpace(lattice_vectors=hexagonal_lattice_vectors)
+k_path = honeycomb.path_k_mesh(k_points=list(hexagonal_high_symmetry_points.values()))
+honeycomb.run(Hks_fnc=honeycomb_kin, k_mesh=k_path)
+honeycomb.plot()
