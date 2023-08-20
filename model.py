@@ -87,7 +87,7 @@ class KSpace(object):
         self._mesh_list = mesh
         self._k_type = 'full_bz'
 
-    def monkhorst_pack(self, nk_list=6, shift_list=0, basis='fractional', domain=[-0.5, 0.5], endpoint=True):
+    def monkhorst_pack(self, nk_list=6, shift_list=0, basis='fractional', domain=[0, 1], endpoint=True):
         '''
         Generate an equally spaced hypercubic k-mesh
 
@@ -174,7 +174,7 @@ class KSpace(object):
     def frac_list(self):
         if not hasattr(self,'_frac_list') and (hasattr(self,'_cart_list') or hasattr(self,'_cart_mesh')):
             # k_frac = G^-1 k_frac
-            self._frac_list = self._cart_list @ np.linalg.inv(self._reciprocal_vectors).T
+            self._frac_list = self._cart_list @ np.linalg.inv(self._reciprocal_vectors) # valid because inv(A.T).T = inv(A)
         if not hasattr(self,'_frac_list'):
             self._frac_list = self.to_list(self.frac_mesh)
         return self._frac_list
@@ -188,9 +188,11 @@ class KSpace(object):
     @property 
     def cart_list(self):
         if not hasattr(self,'_cart_list') and (hasattr(self,'_frac_list') or hasattr(self,'_frac_mesh')):
-            # k_cart = G k_frac, but k_frac is a list of vectors not columns.
-            # To vectorize the operation we can instead do k_cart = (mesh k_frac.T) because Ax = (x.T A.T).T
-            self._cart_list = self.frac_list @ self._reciprocal_vectors.T
+            # G is in row format, so we first transpose it so that b1,b2,b3 are the columns of the matrix
+            # But k_frac is also a list of vectors and is not in columns, so we first have to transpose it
+            # Then, k_cart = G.T k_frac.T so it is a matrix going into a column array
+            # To allow proper broadcasting for numpy we can instead do k_cart = (k_frac G ) because Ax = (x.T A.T).T
+            self._cart_list = self.frac_list @ self._reciprocal_vectors
         elif not hasattr(self,'_cart_list') and hasattr(self,'_cart_mesh'):
             self._cart_list = self.to_list(self.cart_mesh)
         return self._cart_list
@@ -426,8 +428,13 @@ class Topology:
         integrator = integrate.simpson
         if dim == 2:
             omega = self.berry_curvature(subspace=subspace, i=0, j=1, delta=delta)
-            kx = self._kspace.cart_mesh[0][0]
-            ky = self._kspace.cart_mesh[1][:,0]
+            if self._kspace._basis == 'fractional':
+                # Note the order is reversed for meshgrid when indexing='xy'
+                ky = self._kspace.frac_mesh[0][0]
+                kx = self._kspace.frac_mesh[1][:,0]
+            if self._kspace._basis == 'cartesian':    
+                ky = self._kspace.cart_mesh[0][0]
+                kx = self._kspace.cart_mesh[1][:,0]
             omega_int = integrator(integrator(omega, kx), ky)
             return (1.0 / (2.0 * np.pi)) * omega_int
     
@@ -435,8 +442,12 @@ class Topology:
         # FIXME what if not 2D?
         integrator = integrate.simpson
         g = self.quantum_metric(subspace=subspace, i=i, j=j, delta=delta)
-        kx = self._kspace.cart_mesh[0][0]
-        ky = self._kspace.cart_mesh[1][:,0]
+        if self._kspace._basis == 'fractional':
+            ky = self._kspace.frac_mesh[0][0]
+            kx = self._kspace.frac_mesh[1][:,0]
+        if self._kspace._basis == 'cartesian':    
+            ky = self._kspace.cart_mesh[0][0]
+            kx = self._kspace.cart_mesh[1][:,0]
         g_int = integrator(integrator(g, kx), ky)
         return (1.0 / (2.0 * np.pi)) * g_int
 
@@ -445,7 +456,7 @@ class Topology:
         g = self.quantum_metric(subspace=subspace, i=i, j=j, delta=delta)
         omega = self.berry_curvature(subspace=subspace, i=i, j=j, delta=delta)
 
-        levels = np.arange(0,5+0.1)
+        #levels = np.arange(0,5+0.1)
         levels = None
 
         fig, axis = plt.subplots(2)
@@ -494,7 +505,7 @@ cubic = TightBinding(Hks_fnc=hypercubic_kin, kspace_class=cubic_kspace)
 #square = TightBinding(Hks_fnc=cubic_kin, kspace_class=square_kspace)
 #square.plot()
 
-def honeycomb_kin(kspace_class, t=1, Delta=0.2, t2=0.1):
+def honeycomb_kin(kspace_class, t=1, Delta=0.2, t2=0.12):
     a1 = kspace_class.lattice_vectors[0]
     a2 = kspace_class.lattice_vectors[1]
     a3 = -(a1+a2)
@@ -507,6 +518,7 @@ def honeycomb_kin(kspace_class, t=1, Delta=0.2, t2=0.1):
     for n in ns:
         gammaks += np.exp( 1j * kspace_class.cart_list @ n )
 
+    # FIXME these must be wrong because the parameters are wrong for when chern != 0
     m1 = n2 - n3
     m2 = n3 - n2
     m3 = n1 - n3
@@ -514,7 +526,7 @@ def honeycomb_kin(kspace_class, t=1, Delta=0.2, t2=0.1):
     alphaks = 0
     for m in ms:
         alphaks += np.sin(kspace_class.cart_list @ m )
-    
+
     orb_dim = 2
     Hks = np.zeros(shape=(kspace_class.nks, orb_dim, orb_dim), dtype=np.complex_)
     Hks[...,0,0] = Delta + 2*t2*alphaks
@@ -526,20 +538,20 @@ def honeycomb_kin(kspace_class, t=1, Delta=0.2, t2=0.1):
 honeycomb_lattice_vectors = [[-1.0/2.0, np.sqrt(3)/2.0], [-1.0/2.0, -np.sqrt(3)/2.0]]
 #honeycomb_lattice_vectors = [[np.sqrt(3)/2.0, 1/2.0], [-np.sqrt(3)/2.0, 1/2.0]]
 honeycomb_kspace = KSpace(lattice_vectors=honeycomb_lattice_vectors)
-#honeycomb_kspace.monkhorst_pack(nk_list=300, domain=[-1,1])
 honeycomb_kspace.monkhorst_pack(nk_list=300, basis='cartesian', domain=[-2*np.pi,2*np.pi])
 honeycomb = TightBinding(Hks_fnc=honeycomb_kin, kspace_class=honeycomb_kspace)
-honeycomb.plot_contour()
-honeycomb.plot_surface()
+#honeycomb.plot_contour()
+#honeycomb.plot_surface()
 honeycomb_top = Topology(tb=honeycomb)
-honeycomb_top.plot_contour(i=0, j=1, subspace=[0])
+#honeycomb_top.plot_contour(i=0, j=1, subspace=[0])
 
 honeycomb_frac_kspace = KSpace(lattice_vectors=honeycomb_lattice_vectors)
-honeycomb_frac_kspace.monkhorst_pack(nk_list=1000, endpoint=False)
+honeycomb_frac_kspace.monkhorst_pack(nk_list=1000, endpoint=True) # or false?
 honeycomb_frac = TightBinding(Hks_fnc=honeycomb_kin, kspace_class=honeycomb_frac_kspace)
 honeycomb_frac.plot_contour()
 honeycomb_frac.plot_surface()
 honeycomb_frac_top = Topology(tb=honeycomb_frac)
+honeycomb_frac_top.plot_contour(i=0, j=1, subspace=[0])
 print(f'honeycomb Chern number = {honeycomb_frac_top.chern_number(subspace=[0])}')
 
 #hexagonal_high_symmetry_points = {'G':[0,0], 'M':[1.0/2.0,0], 'K':[1.0/3.0,1.0/3.0], 'G2':[0,0]}
@@ -592,7 +604,8 @@ lieb_lattice_vectors = [[1,0],[0,1]]
 lieb_kspace = KSpace(lattice_vectors=lieb_lattice_vectors)
 lieb_kspace.monkhorst_pack(nk_list=300)
 lieb = TightBinding(Hks_fnc=lieb_kin, kspace_class=lieb_kspace)
-lieb.plot_contour(band=0)
-lieb.plot_surface()
+#lieb.plot_contour(band=0)
+#lieb.plot_surface()
 lieb_top = Topology(tb=lieb)
-lieb_top.plot_contour(i=0, j=0, subspace=[1])
+#lieb_top.plot_contour(i=0, j=0, subspace=[1])
+#print(f'lieb Chern number = {lieb_top.chern_number(subspace=[0])}')
