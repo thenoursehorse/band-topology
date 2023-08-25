@@ -21,7 +21,7 @@ def kagome_kin(kspace_class, t=1):
 
 # Define the hexagonal Bravais lattice
 lattice_vectors = [[-1.0/2.0, np.sqrt(3)/2.0], [-1.0/2.0, -np.sqrt(3)/2.0]]
-high_symmetry_points = {'G':[0,0], 'M':[1.0/2.0,0], 'K':[1.0/3.0,1.0/3.0], 'G2':[0,0]}
+frac_high_symmetry_points = {'$\Gamma$':[0,0], '$M$':[1.0/2.0,0], '$K$':[1.0/3.0,1.0/3.0], '$\Gamma$@':[0,0]}
 
 # Define the meshgrid and tight-binding model for a visualization of the band structure
 kspace = KSpace(lattice_vectors=lattice_vectors)
@@ -30,6 +30,12 @@ tb = TightBinding(Hks_fnc=kagome_kin, kspace_class=kspace)
 tb.plot_contour(band=1)
 tb.plot_surface()
 
+# Redefine on a path to get the spaghetti plots
+path_kspace = KSpace(lattice_vectors=lattice_vectors)
+path_kspace.path(special_points=frac_high_symmetry_points, basis='fractional')
+path_tb = TightBinding(Hks_fnc=kagome_kin, kspace_class=path_kspace)
+path_tb.plot_path()
+
 # Redefine on a mesh in fractional coordinates corresponding to the a single BZ
 frac_kspace = KSpace(lattice_vectors=lattice_vectors)
 frac_kspace.monkhorst_pack(nk_list=60)
@@ -37,11 +43,13 @@ frac_tb = TightBinding(Hks_fnc=kagome_kin, kspace_class=frac_kspace)
 frac_tb.plot_contour(band=1)
 frac_tb.plot_surface()
 
-# Calculate the topology properties in the bottom band
-top = Topology(tb=frac_tb, subspace=[1])
+# Calculate topology in the top band
+top = Topology(tb=frac_tb, subspace=[0])
 print(f'Chern number = {top.chern_number()}')
 print(f'metric number = {top.metric_number()}')
 
-# Plot the xy elements of the geometric tensor
-top.plot_contour(i=0, j=1)
-top.plot_colormesh(i=0, j=1)
+# Plot the geometric tensor
+top.plot_contour(function=top.quantum_metric, label='$g$')
+top.plot_colormesh(function=top.quantum_metric, label='$g$')
+top.plot_contour(function=top.berry_curvature, label='$\Omega$')
+top.plot_colormesh(function=top.berry_curvature, label='$\Omega$')

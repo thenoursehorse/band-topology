@@ -7,6 +7,7 @@ from matplotlib import cm as cmap_cm
 import seaborn as sns
 
 from copy import deepcopy
+import itertools
 
 from band_topology.meshes.kspace import *
 from band_topology.models.tightbinding import *
@@ -19,13 +20,13 @@ class Topology:
         self._basis = basis
         self._delta = delta
 
-        if self._basis != 'cartesian':
-            raise ValueError('Only evaluating metrics in cartesian coordinates is properly working !')
+        #if self._basis != 'cartesian':
+        #    raise ValueError('Only evaluating metrics in cartesian coordinates is properly working !')
 
     def kspace_shifted(self, shift_vector):
         shift_list = deepcopy(self._kspace._shift_list) + shift_vector
         kspace_shifted = KSpace(lattice_vectors=self._kspace.lattice_vectors)
-        if self._kspace._k_type == 'full_bz':
+        if self._kspace._k_type == 'monkhorst':
             kspace_shifted.monkhorst_pack(nk_list=self._kspace._nk_list,
                                           shift_list=shift_list,
                                           basis=self._kspace.basis,
@@ -113,8 +114,10 @@ class Topology:
             dPks_i = self.dPks[i]
             dPks_j = self.dPks[j]
 
-            self.check_projector(Pks, dPks_i, i)
-            self.check_projector(Pks, dPks_j, j)
+            #self.check_projector(Pks, dPks_i, i)
+            #self.check_projector(Pks, dPks_j, j)
+
+            print("TEST")
 
             g =  0.5 * np.trace(dPks_i @ dPks_j, axis1=-2, axis2=-1)
             if np.linalg.norm(g.imag) > 1e-10:
@@ -129,8 +132,8 @@ class Topology:
             dPks_i = self.dPks[i]
             dPks_j = self.dPks[j]
                 
-            self.check_projector(Pks, dPks_i, i)
-            self.check_projector(Pks, dPks_j, j)
+            #self.check_projector(Pks, dPks_i, i)
+            #self.check_projector(Pks, dPks_j, j)
 
             omega = 1j * np.trace(Pks @ (dPks_i @ dPks_j - dPks_j @ dPks_i), axis1=-2, axis2=-1)
             if np.linalg.norm(omega.imag) > 1e-10:
@@ -191,6 +194,16 @@ class Topology:
             else:
                 factor = 1
             return factor * A_int
+
+    def wilson_path(self, path={'a':[0,0], 'b':[1,0]}, basis='fractional'):
+        '''
+        W(k2,k3) = U^dag(2pi, k2, k3) \prod_(k1)^(2pi <- 0) P(k1, k2, 3) U(0, k2, k3)
+        '''
+        kspace = KSpace(lattice_vectors=self._kspace.lattice_vectors)
+        kspace.path(special_points=path, basis=basis)
+        tb = TightBinding(Hks_fnc=kagome_kin, kspace_class=path_kspace)
+        Pks = tb.get_Pks(subspace=self._subspace)
+        # TODO finish implementation
         
     def chern_number(self, method='simpson'):
         '''
@@ -270,48 +283,82 @@ class Topology:
         else:
             raise ValueError('Unrecognized integration method !')
 
-    def plot_contour(self, i=0, j=0, cmap=sns.color_palette('icefire', as_cmap=True), xlim=None, ylim=None):
-        g = self.quantum_metric(i=i, j=j)
-        omega = self.berry_curvature(i=i, j=j)
+    def plot_contour(self, function, 
+                           i=None, 
+                           j=None, 
+                           label='', 
+                           cmap=sns.color_palette('icefire', as_cmap=True),
+                           levels=None):
+        if not isinstance(i, type(j)):
+            raise ValueError('i and j must both be the same type !')
+        if isinstance(i, int):
+            fig, axis = plt.subplots(1)
+            i_arr = [i]
+            j_arr = [j]
+            axis = np.array([[axis]])
+        else:
+            fig, axis = plt.subplots(self._kspace.d, self._kspace.d)
+            i_arr = [i for i in range(self._kspace.d)]
+            j_arr = [j for j in range(self._kspace.d)]
+        
+        if self.basis == 'cartesian':
+            ks = self._kspace.cart_mesh / np.pi
+        elif self.basis == 'fractional':
+            ks = self._kspace.frac_mesh
 
-        #levels = np.arange(0,5+0.1)
-        levels = None
-
-        fig, axis = plt.subplots(2)
-        contour0 = axis[0].contourf(*self._kspace.cart_mesh/np.pi, g, cmap=cmap, levels=levels, extend='both')
-        contour1 = axis[1].contourf(*self._kspace.cart_mesh/np.pi, omega, cmap=cmap, levels=levels, extend='both')
-
-        for ax in axis:
-            ax.set_xlabel('$k_x/\pi$')
-            ax.set_ylabel('$k_y/\pi$')
-            if xlim is not None:
-                ax.set_xlim(np.array(xlim)/np.pi)
-            if ylim is not None:
-                ax.set_ylim(np.array(ylim)/np.pi)
-        fig.colorbar(contour0)
-        fig.colorbar(contour1)
+        for i,j in list(itertools.product(range(len(i_arr)), range(len(j_arr)))):
+            z = function(i=i_arr[i], j=j_arr[j])
+            im = axis[i,j].contourf(*ks, z, cmap=cmap, levels=levels, extend='both') 
+            cb = fig.colorbar(im, orientation='vertical', pad=0.01)
+            cb.outline.set_visible(False)
+            cb.ax.tick_params(width=0)
+            cb.set_label(label + r'$_{' + f'{i_arr[i]}{j_arr[j]}' + r'}$')
+            if self.basis == 'cartesian':
+                axis[i,j].set_xlabel('$k_x/\pi$')
+                axis[i,j].set_ylabel('$k_y/\pi$')
+            elif self.basis == 'fractional':
+                axis[i,j].set_xlabel('$k_1$')
+                axis[i,j].set_ylabel('$k_2$')
+        
         plt.show()
 
-    def plot_colormesh(self, i=0, j=0, cmap=sns.color_palette('icefire', as_cmap=True), vmin=None, vmax=None, rasterized=True):
-        g = self.quantum_metric(i=i, j=j)
-        omega = self.berry_curvature(i=i, j=j)
+    def plot_colormesh(self, function, 
+                             i=None, 
+                             j=None,
+                             label='',
+                             cmap=sns.color_palette('icefire', as_cmap=True), 
+                             vmin=None, 
+                             vmax=None, 
+                             rasterized=True):
+        if (i is not None) and (j is not None):
+            fig, axis = plt.subplots(1)
+            i_arr = [i]
+            j_arr = [j]
+            axis = np.array([[axis]])
+        else:
+            fig, axis = plt.subplots(self._kspace.d, self._kspace.d)
+            i_arr = [i for i in range(self._kspace.d)]
+            j_arr = [j for j in range(self._kspace.d)]
+
+        if self.basis == 'cartesian':
+            ks = self._kspace.cart_mesh / np.pi
+        elif self.basis == 'fractional':
+            ks = self._kspace.frac_mesh
+
+        for i,j in list(itertools.product(range(len(i_arr)), range(len(j_arr)))):
+            z = function(i=i_arr[i], j=j_arr[j])
+            im = axis[i,j].pcolormesh(*ks, z, vmin=vmin, vmax=vmax, rasterized=rasterized, cmap=cmap)
+            cb = fig.colorbar(im, orientation='vertical', pad=0.01)
+            cb.outline.set_visible(False)
+            cb.ax.tick_params(width=0)
+            cb.set_label(label + r'$_{' + f'{i_arr[i]}{j_arr[j]}' + r'}$')
+            if self.basis == 'cartesian':
+                axis[i,j].set_xlabel('$k_x/\pi$')
+                axis[i,j].set_ylabel('$k_y/\pi$')
+            elif self.basis == 'fractional':
+                axis[i,j].set_xlabel('$k_1$')
+                axis[i,j].set_ylabel('$k_2$')
         
-        fig, axis = plt.subplots(2)
-
-        im = []
-        im.append( axis[0].pcolormesh(*self._kspace.cart_mesh/np.pi, g, vmin=vmin, vmax=vmax, rasterized=rasterized, cmap=cmap) )
-        im.append( axis[1].pcolormesh(*self._kspace.cart_mesh/np.pi, omega, vmin=vmin, vmax=vmax, rasterized=rasterized, cmap=cmap) )
-
-        cb = []
-        for i in range(len(axis)):
-            cb.append( fig.colorbar(im[i], orientation='vertical', pad=0.01) )
-            cb[i].outline.set_visible(False)
-            cb[i].ax.tick_params(width=0)
-        
-        for ax in axis:
-            ax.set_xlabel('$k_x/\pi$')
-            ax.set_ylabel('$k_y/\pi$')
-
         plt.show()
 
     @property

@@ -49,39 +49,71 @@ class TightBinding():
     
     #FIXME
     def plot_path(self, ax=None):
+        fig, ax = plt.subplots()
+        
         x = [i for i in range(self._kspace.nks)]
         for n in range(self.nbands):
-            plt.plot(x, self._Eks[:,n])
+            ax.plot(x, self._Eks[...,n], color='black')
+
+        xticks = list( self._kspace._path_class.special_points_indices.values() )
+        xlabels = list( self._kspace._path_class.special_points_indices.keys() )
+        for i in range(len(xlabels)):
+            xlabels[i] = xlabels[i].replace('@', '')
+        ax.set_xticks(xticks, xlabels)
+        ax.set_xlim(xmin=0, xmax=len(x)-1)
+        ax.set_ylabel(r'$\varepsilon(\vec{k})$')
         plt.show()
 
-    def plot_contour(self, band=0, cmap=sns.color_palette('icefire', as_cmap=True), xlim=None, ylim=None):
+    def plot_contour(self, band=0, 
+                           cmap=sns.color_palette('icefire', 
+                           as_cmap=True),
+                           levels=None,
+                           basis='cartesian'):
+        if basis == 'cartesian':
+            ks = self._kspace.cart_mesh/np.pi
+        elif basis == 'fractional':
+            ks = self._kspace.frac_mesh
+        
         fig, ax = plt.subplots()
-        contour = ax.contourf(*self._kspace.cart_mesh/np.pi, self.Eks[...,band], cmap=cmap)
+        contour = ax.contourf(*ks, self.Eks[...,band], cmap=cmap)
+        
+        cb = fig.colorbar(contour, orientation='vertical', pad=0.01)
+        cb.outline.set_visible(False)
+        cb.ax.tick_params(width=0)
+        cb.set_label(r'$\varepsilon(\vec{k})$')
+        
         ax.set_xlabel('$k_x/\pi$')
         ax.set_ylabel('$k_y/\pi$')
-        if xlim is not None:
-            ax.set_xlim(np.array(xlim)/np.pi)
-        if ylim is not None:
-            ax.set_ylim(np.array(ylim)/np.pi)
-        fig.colorbar(contour)
         plt.show()
     
-    def plot_surface(self, band=None, cmap=sns.color_palette('icefire', as_cmap=True), xlim=None, ylim=None):
+    def plot_surface(self, band=None, 
+                           cmap=sns.color_palette('icefire', as_cmap=True), 
+                           vmin=None, 
+                           vmax=None,
+                           basis='cartesian'):
+        if basis == 'cartesian':
+            ks = self._kspace.cart_mesh/np.pi
+        elif basis == 'fractional':
+            ks = self._kspace.frac_mesh
+        
         fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
         if band is None:
-            vmin = np.min(self.Eks)
-            vmax = np.max(self.Eks)
+            if vmin is None:
+                vmin = np.min(self.Eks)
+                vmax = np.max(self.Eks)
             for n in range(self.nbands):
-                surf = ax.plot_surface(*self._kspace.cart_mesh/np.pi, self.Eks[...,n], cmap=cmap, vmin=vmin, vmax=vmax)
+                surf = ax.plot_surface(*ks, self.Eks[...,n], cmap=cmap, vmin=vmin, vmax=vmax)
         else:
-            surf = ax.plot_surface(*self._kspace.cart_mesh/np.pi, self.Eks[...,band], cmap=cmap)
+            surf = ax.plot_surface(*ks, self.Eks[...,band], cmap=cmap, vmin=vmin, vmax=vmax)
+        
+        #cb = fig.colorbar(surf, orientation='vertical', pad=0.01)
+        #cb.outline.set_visible(False)
+        #cb.ax.tick_params(width=0)
+        #cb.set_label(r'$\varepsilon(\vec{k})$')
+        
         ax.set_xlabel('$k_x/\pi$')
         ax.set_ylabel('$k_y/\pi$')
-        if xlim is not None:
-            ax.set_xlim(np.array(xlim)/np.pi)
-        if ylim is not None:
-            ax.set_ylim(np.array(ylim)/np.pi)
-        fig.colorbar(surf, shrink=0.5)
+        ax.set_zlabel(r'$\varepsilon(\vec{k})$')
         plt.show()
 
     @property
