@@ -8,6 +8,7 @@ import seaborn as sns
 
 from copy import deepcopy
 import itertools
+import functools
 
 from band_topology.meshes.kspace import *
 from band_topology.models.tightbinding import *
@@ -67,13 +68,6 @@ class Topology:
             return (self.get_Pks_shifted(shift_vector) - self.get_Pks_shifted(-shift_vector) ) / (2.0*self._delta)
         elif method == 'forward':
             return (self.get_Pks_shifted(shift_vector) - self.Pks) / self._delta
-        elif method == 'dumb':
-            # indexing of mesh arrays is in 'xy'
-            if i == 1:
-                ks = self._kspace.mesh(self.basis)[0][0]
-            if i == 0:
-                ks = self._kspace.mesh(self.basis)[1][:,0]
-            return np.gradient(self.Pks, ks, axis=i)
         else:
             raise ValueError('Unrecognized derivative method !')
 
@@ -195,15 +189,61 @@ class Topology:
                 factor = 1
             return factor * A_int
 
-    def wilson_path(self, path={'a':[0,0], 'b':[1,0]}, basis='fractional'):
+    def wilson_path(self, path={'a':[0,0], 'b':[1,0]}, n_points=100, basis='fractional', method='vector', wrap=False):
         '''
         W(k2,k3) = U^dag(2pi, k2, k3) \prod_(k1)^(2pi <- 0) P(k1, k2, 3) U(0, k2, k3)
+        where U(2pi) = U(0), P(2pi) = P(0)
         '''
         kspace = KSpace(lattice_vectors=self._kspace.lattice_vectors)
-        kspace.path(special_points=path, basis=basis)
-        tb = TightBinding(Hks_fnc=kagome_kin, kspace_class=path_kspace)
-        Pks = tb.get_Pks(subspace=self._subspace)
-        # TODO finish implementation
+        kspace.path(special_points=path, n_points=n_points, basis=basis)
+        tb = TightBinding(Hks_fnc=self._tb._Hks_fnc, kspace_class=kspace)
+
+        if method == 'vector':
+            U = tb.get_Uks_subspace(self._subspace)
+            #Pks = tb.get_Pks(subspace=None, U=U[1:-1,...])
+            Pks = tb.get_Pks(subspace=None, U=U)
+        elif method == 'sum':
+            Pks = tb.get_Pks(subspace=self._subspace, method='sum')
+        elif method == 'explicit':
+            pass
+        else:
+            raise ValueError('Unrecognized method !')
+
+        if (method == 'vector') or (method == 'sum'):
+            #W = deepcopy(Pks[0])
+            #for k in range(1,Pks.shape[0]):
+            #    W = Pks[k] @ W
+            #W = np.linalg.multi_dot(Pks[::-1,...]) # Optimizing order is not required, and bad overhead
+            if wrap:
+                W = functools.reduce(np.dot, Pks[::-1]) # Reverse order so goes from 2pi <- 0
+            else:
+                W = functools.reduce(np.dot, Pks[::-1][:-1]) # Ignore end point because it should wrap U[2pi] = U[0]
+        elif method == 'explicit':
+            W = np.eye(len(self._subspace))
+            N = tb._kspace.nks - 1 # Ignore end point
+            for k in range(N):
+                W_tmp = np.zeros(shape=(len(self._subspace), len(self._subspace)), dtype=np.complex_)
+                for i,m in enumerate(self._subspace):
+                    for j,n in enumerate(self._subspace):
+                        W_tmp[i,j] = tb.Uks[k,:,m].conj().T @ tb.Uks[(k+1)%N,:,n]
+                W = W @ W_tmp
+            return W
+        
+        if method == 'vector':
+            if wrap:
+                return U[-1].conj().T @ W @ U[0]
+            else:
+                return U[0].conj().T @ W @ U[0]
+        elif method == 'sum':
+            W_out = np.empty(shape=(len(self._subspace), len(self._subspace)), dtype=np.complex_)
+            for i,m in enumerate(self._subspace):
+                for j,n in enumerate(self._subspace):
+                    if wrap:
+                        W_out[i,j] = tb.Uks[-1,:,m].conj().T @ W @ tb.Uks[0,:,n]
+                    else:
+                        W_out[i,j] = tb.Uks[0,:,m].conj().T @ W @ tb.Uks[0,:,n]
+            return W_out
+
         
     def chern_number(self, method='simpson'):
         '''

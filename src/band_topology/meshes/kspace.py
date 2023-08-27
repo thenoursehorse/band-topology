@@ -48,7 +48,7 @@ class KSpacePath(object):
         # Work out how many points in each segment based on length of segment
         self._nks_segment = []
         for i in range(n_segments):
-            self._nks_segment.append( int( self._n_points * distances[i]/total_distance) )
+            self._nks_segment.append( int( np.ceil(self._n_points * distances[i]/total_distance)) )
         self._nks = sum(self._nks_segment)
 
         self._ks_list = np.zeros(shape=(self._nks, dim))

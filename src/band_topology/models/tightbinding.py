@@ -38,14 +38,27 @@ class TightBinding():
         # https://www.reddit.com/r/Python/comments/qevahz/tensor_contractions_with_numpys_einsum_function/
         #self._Pks = np.tensordot(self.Uks, self.Uks.conj(), axis=((-2),(-2)))
 
-    def get_Pks(self, subspace):
+    def get_Uks_subspace(self, subspace):
         # nbands x len(subspace) rectangular matrix of eigenvectors, eg., U = [U1, U2, ..., UN]
-        # Projectors is P = U U^+
         U = np.empty(shape=(*self._kspace.mesh_shape, self.nbands, len(subspace)), dtype=np.complex_)
         for n in range(len(subspace)):
             U[...,n] = self.Uks[...,subspace[n]]
         #return np.einsum('...in,...jn->...ij', U, U.conj())
-        return U @ np.swapaxes(U.conj(), -2, -1)
+        return U
+
+    def get_Pks(self, subspace, U=None, method='vector'):
+        # Projectors is P = U U^+
+        if method == 'vector':
+            if U is None:
+                U = self.get_Uks_subspace(subspace)
+            return U @ np.swapaxes(U.conj(), -2, -1)
+        elif method == 'sum':
+            Pks = 0
+            for n in subspace:
+                Pks += self.Pks[...,n,:,:]
+            return Pks
+        else:
+            raise ValueError('Unrecognized method !')
     
     #FIXME
     def plot_path(self, ax=None):
@@ -81,9 +94,14 @@ class TightBinding():
         cb.outline.set_visible(False)
         cb.ax.tick_params(width=0)
         cb.set_label(r'$\varepsilon(\vec{k})$')
+
+        if basis == 'cartesian':
+            ax.set_xlabel('$k_x/\pi$')
+            ax.set_ylabel('$k_y/\pi$')
+        elif basis == 'fractional':
+            ax.set_xlabel('$k_1$')
+            ax.set_ylabel('$k_2$')
         
-        ax.set_xlabel('$k_x/\pi$')
-        ax.set_ylabel('$k_y/\pi$')
         plt.show()
     
     def plot_surface(self, band=None, 
@@ -111,9 +129,15 @@ class TightBinding():
         #cb.ax.tick_params(width=0)
         #cb.set_label(r'$\varepsilon(\vec{k})$')
         
-        ax.set_xlabel('$k_x/\pi$')
-        ax.set_ylabel('$k_y/\pi$')
         ax.set_zlabel(r'$\varepsilon(\vec{k})$')
+        
+        if basis == 'cartesian':
+            ax.set_xlabel('$k_x/\pi$')
+            ax.set_ylabel('$k_y/\pi$')
+        elif basis == 'fractional':
+            ax.set_xlabel('$k_1$')
+            ax.set_ylabel('$k_2$')
+        
         plt.show()
 
     @property

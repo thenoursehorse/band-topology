@@ -44,7 +44,8 @@ frac_tb.plot_contour(band=1)
 frac_tb.plot_surface()
 
 # Calculate topology in the top band
-top = Topology(tb=frac_tb, subspace=[0])
+subspace = [0,1]
+top = Topology(tb=frac_tb, subspace=subspace)
 print(f'Chern number = {top.chern_number()}')
 print(f'metric number = {top.metric_number()}')
 
@@ -53,3 +54,15 @@ top.plot_contour(function=top.quantum_metric, label='$g$')
 top.plot_colormesh(function=top.quantum_metric, label='$g$')
 top.plot_contour(function=top.berry_curvature, label='$\Omega$')
 top.plot_colormesh(function=top.berry_curvature, label='$\Omega$')
+
+# Calculate Wilson loops
+k2 = np.linspace(0,1,100)
+wannier_centers = np.empty(shape=(len(k2),len(subspace)))
+for i,k in enumerate(k2):
+    W = top.wilson_path(n_points=1000, path={'0':[0,k], '2pi':[1,k]})
+    e, v = np.linalg.eig(W)
+    wannier_centers[i,:] = np.sort(np.angle(e) / np.pi)
+
+import matplotlib.pyplot as plt
+plt.plot(k2, wannier_centers)
+plt.show()

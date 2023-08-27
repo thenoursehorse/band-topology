@@ -68,7 +68,8 @@ frac_tb.plot_contour()
 frac_tb.plot_surface()
 
 # Calculate the topology properties in the bottom band
-top = Topology(tb=frac_tb, subspace=[0], delta=1e-4)
+subspace = [0]
+top = Topology(tb=frac_tb, subspace=subspace, delta=1e-4)
 print(f'Chern number = {top.chern_number()}')
 print(f'metric number = {top.metric_number()}')
 
@@ -77,3 +78,20 @@ top.plot_contour(function=top.quantum_metric, label='$g$')
 top.plot_contour(function=top.berry_curvature, label='$\Omega$')
 top.plot_colormesh(function=top.quantum_metric, label='$g$')
 top.plot_colormesh(function=top.berry_curvature, label='$\Omega$')
+
+# Calculate Wilson loops
+k2 = np.linspace(-0.5, 0.5, 100)
+#k2 = np.linspace(0,7.25519746,100)
+
+W = np.empty(shape=(len(k2), len(subspace), len(subspace)), dtype=np.complex_)
+for i,k in enumerate(k2):
+    W[i,...] = top.wilson_path(n_points=100, path={'-pi':[-0.5,k], 'pi':[0.5,k]})
+    #W[i,...] = top.wilson_path(n_points=10000, path={'0':[0,k], '2pi':[-12.56637061,k]}, basis='cartesian')
+
+e, v = np.linalg.eig(W)
+#wannier_centers = np.sort(np.angle(e), axis=-1) / (2*np.pi)
+wannier_centers = np.sort(-np.log(e).imag, axis=-1) / (2*np.pi)
+
+import matplotlib.pyplot as plt
+plt.plot(k2, 2*wannier_centers, 'o', color='black')
+plt.show()

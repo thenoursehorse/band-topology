@@ -38,7 +38,8 @@ path_tb = TightBinding(Hks_fnc=lieb_kin, kspace_class=path_kspace, tb_parameters
 path_tb.plot_path()
 
 # Calculate the topology properties in flat band in the middle
-top = Topology(tb=tb, subspace=[1])
+subspace=[0,1]
+top = Topology(tb=tb, subspace=subspace)
 print(f'Chern number = {top.chern_number()}')
 print(f'metric number = {top.metric_number()}')
 
@@ -48,3 +49,17 @@ top.plot_contour(function=top.quantum_metric, label='$g$')
 top.plot_colormesh(function=top.quantum_metric, label='$g$')
 top.plot_contour(function=top.berry_curvature, label='$\Omega$')
 top.plot_colormesh(function=top.berry_curvature, label='$\Omega$')
+
+# Calculate Wilson loops
+k2 = np.linspace(-0.5, 0.5, 100)
+W = np.empty(shape=(len(k2), len(subspace), len(subspace)), dtype=np.complex_)
+for i,k in enumerate(k2):
+    W[i,...] = top.wilson_path(n_points=100, path={'-pi':[-0.5,k], 'pi':[0.5,k]})
+
+e, v = np.linalg.eig(W)
+#wannier_centers = np.sort(np.angle(e), axis=-1) / (2*np.pi)
+wannier_centers = np.sort(-np.log(e).imag, axis=-1) / (2*np.pi)
+
+import matplotlib.pyplot as plt
+plt.plot(k2, 2*wannier_centers, 'o', color='black')
+plt.show()

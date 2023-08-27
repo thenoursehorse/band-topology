@@ -78,3 +78,31 @@ top.plot_contour(function=top.quantum_metric, label='$g$')
 top.plot_colormesh(function=top.quantum_metric, label='$g$')
 top.plot_contour(function=top.berry_curvature, label='$\Omega$')
 top.plot_colormesh(function=top.berry_curvature, label='$\Omega$')
+
+# Calculate Wilson loops
+subspace = [0,1,2,3,4,5]
+#subspace = [0,1,2]
+subspace = [3,4,5]
+#subspace = [0,1,2,3,4,5,6,7,8]
+w_top = Topology(tb=frac_tb, subspace=subspace)
+#kx = (w_top._kspace.reciprocal_vectors[0] + w_top._kspace.reciprocal_vectors[1])[0]
+#ky = (w_top._kspace.reciprocal_vectors[0] + w_top._kspace.reciprocal_vectors[1])[1]
+k2 = np.linspace(0,1,100)
+#k2 = np.linspace(0,2*np.pi,100)
+#k2 = np.linspace(0,ky,100)
+#k2 = np.linspace(0,kx,100)
+W = np.empty(shape=(len(k2), len(subspace), len(subspace)), dtype=np.complex_)
+for i,k in enumerate(k2):
+    W[i,...] = w_top.wilson_path(n_points=100, path={'0':[0,k], '2pi':[1,k]})
+    #W[i,...] = w_top.wilson_path(n_points=10000, path={'0':[k,0], '2pi':[k,1]})
+    #W[i,...] = w_top.wilson_path(n_points=10000, path={'0':[k,0], '2pi':[k,3.62759873]}, basis='cartesian')
+    #W[i,...] = w_top.wilson_path(n_points=10000, path={'0':[0,k], '2pi':[kx,k]}, basis='cartesian')
+    #W[i,...] = w_top.wilson_path(n_points=10000, path={'0':[k,0], '2pi':[k,ky]}, basis='cartesian')
+
+e, v = np.linalg.eig(W)
+#wannier_centers = np.sort(np.angle(e), axis=-1) / (2*np.pi)
+wannier_centers = np.sort(-np.log(e).imag, axis=-1) / (2*np.pi)
+
+import matplotlib.pyplot as plt
+plt.plot(k2, wannier_centers, 'o', color='black')
+plt.show()
