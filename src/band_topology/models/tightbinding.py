@@ -60,7 +60,6 @@ class TightBinding():
         else:
             raise ValueError('Unrecognized method !')
     
-    #FIXME
     def plot_path(self, ax=None):
         fig, ax = plt.subplots()
         
@@ -88,7 +87,8 @@ class TightBinding():
             ks = self._kspace.frac_mesh
         
         fig, ax = plt.subplots()
-        contour = ax.contourf(*ks, self.Eks[...,band], cmap=cmap)
+        # Meshgrid is 'ij' indexing so transpose Eks
+        contour = ax.contourf(*ks, self.Eks[...,band].T, cmap=cmap)
         
         cb = fig.colorbar(contour, orientation='vertical', pad=0.01)
         cb.outline.set_visible(False)
@@ -120,9 +120,10 @@ class TightBinding():
                 vmin = np.min(self.Eks)
                 vmax = np.max(self.Eks)
             for n in range(self.nbands):
-                surf = ax.plot_surface(*ks, self.Eks[...,n], cmap=cmap, vmin=vmin, vmax=vmax)
+                # Meshgrid is 'ij' indexing so transpose Eks
+                surf = ax.plot_surface(*ks, self.Eks[...,n].T, cmap=cmap, vmin=vmin, vmax=vmax)
         else:
-            surf = ax.plot_surface(*ks, self.Eks[...,band], cmap=cmap, vmin=vmin, vmax=vmax)
+            surf = ax.plot_surface(*ks, self.Eks[...,band].T, cmap=cmap, vmin=vmin, vmax=vmax)
         
         #cb = fig.colorbar(surf, orientation='vertical', pad=0.01)
         #cb.outline.set_visible(False)

@@ -53,40 +53,61 @@ class Topology:
         nks = np.product(Pks.shape[:self._kspace.d])
         upc = [np.sum(self.Pks[...,n,n]) / nks for n in range(n_orb)]
         return upc
-    
-    def get_Pks_shifted(self, shift_vector):
+
+    def connection(self):
+        self.set_dOp(operator='U')
+        # FIXME This is the bloch coefficients, but I need the 
+        # factor that includes the Bloch wavefunction A = exp(1j k \cdot delta)
+        # where delta is the vector to the site
+        # Vks = A Uks
+        # dVks = dA Uks + A dUks
+        # connection = 1j <Vks| dVks>
+        return 1j * np.swap(self.Uks.conj(), -2, -1) @ self.Uks
+
+    def get_Op_shifted(self, shift_vector, operator='P'):
         # FIXME there should be a check to see if the shift is commensurate with the already
         # defined grid, so it does not have to be recalculated
         ks_shifted = self.kspace_shifted(shift_vector)
         tb_shifted = TightBinding(Hks_fnc=self._tb._Hks_fnc, 
                                   kspace_class=ks_shifted, 
                                   tb_parameters=self._tb._tb_parameters)
-        return tb_shifted.get_Pks(self._subspace)
+        if operator == 'P':
+            return tb_shifted.get_Pks(self._subspace)
+        elif operator == 'U':
+            return tb_shifted.get_Uks_subspace(self._subspace)
     
-    def get_dPks(self, shift_vector, method='forward'):
+    def get_dOp(self, shift_vector, method='forward', operator='P'):
         if method == 'center':
-            return (self.get_Pks_shifted(shift_vector) - self.get_Pks_shifted(-shift_vector) ) / (2.0*self._delta)
+            return (self.get_Op_shifted(shift_vector, operator) - self.get_Op_shifted(-shift_vector, operator) ) / (2.0*self._delta)
         elif method == 'forward':
-            return (self.get_Pks_shifted(shift_vector) - self.Pks) / self._delta
+            return (self.get_Op_shifted(shift_vector, operator) - self.Pks) / self._delta
         else:
             raise ValueError('Unrecognized derivative method !')
 
-    def set_Pks(self):
-        self._Pks = self._tb.get_Pks(self._subspace)
+    def set_Op(self, operator='P'):
+        if operator == 'P':
+            self._Pks = self._tb.get_Pks(self._subspace)
+        elif operator == 'U':
+            self._Uks = self._tb.get_Uks_subspace(self._subspace)
     
-    def set_dPks(self):
+    def set_dOp(self, operator='P'):
         # Apply a small shift in the coordinate system specified by self.basis
         shift_vectors = self._delta * np.eye(self._kspace.d)
 
         # Match shift coordinates and generating funciton for kspace
         if (self._kspace.basis == 'fractional') and (self.basis == 'cartesian'):
             for i in range(len(shift_vectors)):
-                shift_vectors[i] = self._kspace.transform_ks(shift_vectors[i], to_basis='fractional')
+                shift_vectors[i] = self._kspace.transform_ks(shift_vectors[i], to_basis='fractional', from_basis='cartesian')
         if (self._kspace.basis == 'cartesian') and (self.basis == 'fractional'):
             for i in range(len(shift_vectors)):
-                shift_vectors[i] = self._kspace.transform_ks(shift_vectors[i], to_basis='cartesian')
+                shift_vectors[i] = self._kspace.transform_ks(shift_vectors[i], to_basis='cartesian', from_basis='fractional')
 
-        self._dPks = [self.get_dPks(vec) for vec in shift_vectors]
+        dOp = [self.get_dOp(vec, operator=operator) for vec in shift_vectors]
+
+        if operator == 'P':
+            self._dPks = dOp
+        elif operator == 'U':
+            self._dUks = dOp
     
     def geometric_tensor(self, i=0, j=0):
         Pks = self.Pks
@@ -154,10 +175,14 @@ class Topology:
         
         if method == 'simpson':
             integrator = integrate.simpson
-            # Note the order is reversed for meshgrid when indexing='xy'
-            ky = self._kspace.mesh(self._kspace.basis)[0][0]
-            kx = self._kspace.mesh(self._kspace.basis)[1][:,0]
+            # Note this is the order for meshgrid indexing 'xy'
+            #kx = self._kspace.mesh(self._kspace.basis)[0][0]
+            #ky = self._kspace.mesh(self._kspace.basis)[1][:,0]
 
+            # This is the order for indexing 'xy'
+            kx = self._kspace.mesh(self._kspace.basis)[0][:,0]
+            ky = self._kspace.mesh(self._kspace.basis)[1][0]
+            
             # simpson needs closed domains so add wrap if needed
             if not self._kspace._endpoint:
                 # FIXME what if it is not uniform? It should be kx[-1] = kx[0] + G
@@ -173,12 +198,14 @@ class Topology:
                     padding.append( (0,1) )
                 for _ in range(len(shape_rest)):
                     padding.append( (0,0) )
+                # FIXME is this correct gauge wise?
                 A_tmp = np.pad(A, padding, mode='wrap')
 
             else:
                 A_tmp = A
-            
-            A_int = integrator(integrator(A_tmp, kx), ky)
+
+            #A_int = integrator(integrator(A_tmp.T, kx), ky) # meshgrid indexing 'xy'
+            A_int = integrator(integrator(A_tmp, ky), kx) # meshgrid indexing 'ij'
 
             # Add integration volume fraction
             if (self._kspace.basis == 'fractional') and (self.basis == 'cartesian'):
@@ -189,18 +216,25 @@ class Topology:
                 factor = 1
             return factor * A_int
 
-    def wilson_path(self, path={'a':[0,0], 'b':[1,0]}, n_points=100, basis='fractional', method='vector', wrap=False):
+    def wilson_path(self, path={'a':[0,0], 'b':[1,0]}, n_points=100, basis='fractional', method='vector', V=None):
         '''
-        W(k2,k3) = U^dag(2pi, k2, k3) \prod_(k1)^(2pi <- 0) P(k1, k2, 3) U(0, k2, k3)
-        where U(2pi) = U(0), P(2pi) = P(0)
+        W(k2,k3) = U^dag(k0+G, k2, k3) \prod_(k1)^(k0+G <- k0) P(k1, k2, 3) U(k0, k2, k3)
+        where the periodic gauge is enforced, and defined as
+        U(k0+G) = V^dag U(k0) and P(k0+G) = V^dag P(k0) V = P(k0)
+        and V_ij = delta_ij exp(1j G . r_i) where r_i is the position of an orbital
+        in the unit cell
         '''
+        if V is None:
+            V = np.eye(self._tb.nbands)
+
+        include_endpoint = False
+
         kspace = KSpace(lattice_vectors=self._kspace.lattice_vectors)
-        kspace.path(special_points=path, n_points=n_points, basis=basis)
-        tb = TightBinding(Hks_fnc=self._tb._Hks_fnc, kspace_class=kspace)
+        kspace.path(special_points=path, n_points=n_points, basis=basis, include_endpoint=include_endpoint)
+        tb = TightBinding(Hks_fnc=self._tb._Hks_fnc, kspace_class=kspace, tb_parameters=self._tb._tb_parameters)
 
         if method == 'vector':
             U = tb.get_Uks_subspace(self._subspace)
-            #Pks = tb.get_Pks(subspace=None, U=U[1:-1,...])
             Pks = tb.get_Pks(subspace=None, U=U)
         elif method == 'sum':
             Pks = tb.get_Pks(subspace=self._subspace, method='sum')
@@ -213,35 +247,43 @@ class Topology:
             #W = deepcopy(Pks[0])
             #for k in range(1,Pks.shape[0]):
             #    W = Pks[k] @ W
-            #W = np.linalg.multi_dot(Pks[::-1,...]) # Optimizing order is not required, and bad overhead
-            if wrap:
-                W = functools.reduce(np.dot, Pks[::-1]) # Reverse order so goes from 2pi <- 0
-            else:
-                W = functools.reduce(np.dot, Pks[::-1][:-1]) # Ignore end point because it should wrap U[2pi] = U[0]
+
+            W = functools.reduce(np.dot, Pks[::-1]) # Reverse order so goes from 2pi <- 0
+            
+            if not include_endpoint:
+                #W = Pks[0] @ W # Include the k+G = k contribution
+                # Below is the correct one to do surely
+                W = V.conj().T @ Pks[0] @ V @ W # Include the k+G = k contribution
+
+            # Add V for gauge of state on the left
+            W = V @ W
+
         elif method == 'explicit':
             W = np.eye(len(self._subspace))
-            N = tb._kspace.nks - 1 # Ignore end point
-            for k in range(N):
+            if include_endpoint:
+                nks = tb._kspace.nks - 1
+            else:
+                nks = tb._kspace.nks
+            for k in range(nks):
                 W_tmp = np.zeros(shape=(len(self._subspace), len(self._subspace)), dtype=np.complex_)
                 for i,m in enumerate(self._subspace):
                     for j,n in enumerate(self._subspace):
-                        W_tmp[i,j] = tb.Uks[k,:,m].conj().T @ tb.Uks[(k+1)%N,:,n]
+                        if k == nks - 1:
+                            W_tmp[i,j] = tb.Uks[k,:,m].conj().T @ V.conj().T @ tb.Uks[0,:,n]
+                        else:
+                            W_tmp[i,j] = tb.Uks[k,:,m].conj().T @ tb.Uks[(k+1)%nks,:,n]
                 W = W @ W_tmp
             return W
         
         if method == 'vector':
-            if wrap:
-                return U[-1].conj().T @ W @ U[0]
-            else:
-                return U[0].conj().T @ W @ U[0]
+            #return U[-1].conj().T @ W @ U[0]
+            return U[0].conj().T @ W @ U[0]
+        
         elif method == 'sum':
             W_out = np.empty(shape=(len(self._subspace), len(self._subspace)), dtype=np.complex_)
             for i,m in enumerate(self._subspace):
                 for j,n in enumerate(self._subspace):
-                    if wrap:
-                        W_out[i,j] = tb.Uks[-1,:,m].conj().T @ W @ tb.Uks[0,:,n]
-                    else:
-                        W_out[i,j] = tb.Uks[0,:,m].conj().T @ W @ tb.Uks[0,:,n]
+                    W_out[i,j] = tb.Uks[0,:,m].conj().T @ W @ tb.Uks[0,:,n]
             return W_out
 
         
@@ -260,11 +302,11 @@ class Topology:
             shift_x = self._delta * np.array([1,0])
             shift_y = self._delta * np.array([0,1])
             if self._kspace.basis == 'fractional':
-                shift_x = self._kspace.transform_ks(shift_x, to_basis='fractional')
-                shift_y = self._kspace.transform_ks(shift_y, to_basis='fractional')
+                shift_x = self._kspace.transform_ks(shift_x, to_basis='fractional', from_basis='cartesian')
+                shift_y = self._kspace.transform_ks(shift_y, to_basis='fractional', from_basis='cartesian')
             Pks = self.Pks
-            Pks_x = self.get_Pks_shifted(shift_x)
-            Pks_y = self.get_Pks_shifted(shift_y)
+            Pks_x = self.get_Op_shifted(shift_x, operator='P')
+            Pks_y = self.get_Op_shifted(shift_y, operator='P')
             # Can't include the endpoint because it is double counting the 'origin'
             if self._kspace._endpoint:
                 Pks = Pks[:-1,:-1,...]
@@ -303,11 +345,11 @@ class Topology:
             shift_x = self._delta * np.array([1,0])
             shift_y = self._delta * np.array([0,1])
             if self._kspace.basis == 'fractional':
-                shift_x = self._kspace.transform_ks(shift_x, to_basis='fractional')
-                shift_y = self._kspace.transform_ks(shift_y, to_basis='fractional')
+                shift_x = self._kspace.transform_ks(shift_x, to_basis='fractional', from_basis='cartesian')
+                shift_y = self._kspace.transform_ks(shift_y, to_basis='fractional', from_basis='cartesian')
             Pks = self.Pks
-            Pks_x = self.get_Pks_shifted(shift_x)
-            Pks_y = self.get_Pks_shifted(shift_y)
+            Pks_x = self.get_Op_shifted(shift_x, operator='P')
+            Pks_y = self.get_Op_shifted(shift_y, operator='P')
             # Can't include the endpoint because it is double counting the 'origin'
             if self._kspace._endpoint:
                 Pks = Pks[:-1,:-1,...]
@@ -408,13 +450,19 @@ class Topology:
     @property
     def Pks(self):
         if not hasattr(self,'_Pks'):
-            self.set_Pks()
+            self.set_Op(operator='P')
         return self._Pks
+
+    @property
+    def Uks(self):
+        if not hasattr(self,'Uks'):
+            self.set_Op(operator='U')
+        return self._Uks
     
     @property
     def dPks(self):
         if not hasattr(self,'_dPks'):
-            self.set_dPks()
+            self.set_dOp()
         return self._dPks
 
     @property

@@ -21,9 +21,10 @@ class KSpacePath(object):
     '''
     This is a helper class to hold things needed for the paths
     '''
-    def __init__(self, special_points, n_points):
+    def __init__(self, special_points, n_points, include_endpoint):
         self._special_points = special_points
         self._n_points = n_points
+        self._include_endpoint = include_endpoint
         self.make_path()
             
     def make_path(self):
@@ -54,7 +55,7 @@ class KSpacePath(object):
         self._ks_list = np.zeros(shape=(self._nks, dim))
         counter = 0
         for i in range(n_segments):
-            if i == n_segments-1:
+            if (i == n_segments-1) and self._include_endpoint:
                 endpoint = True
             else:
                 endpoint = False
@@ -109,7 +110,7 @@ class KSpace(object):
         self._reciprocal_vectors = 2.0 * np.pi * np.linalg.inv(lattice_vectors).T
         self._d = len(lattice_vectors)
 
-    def path(self, special_points, n_points=100, basis='fractional'):
+    def path(self, special_points, n_points=100, basis='fractional', include_endpoint=True):
         '''
         Generate a linearly interpolated k-mesh path between k-points.
 
@@ -122,13 +123,15 @@ class KSpace(object):
             basis : The coordinate system special_points are given in
         '''
 
-        self._path_class = KSpacePath(special_points=special_points, n_points=n_points)
+        self._path_class = KSpacePath(special_points=special_points, n_points=n_points, include_endpoint=include_endpoint)
         self._nks = self._path_class.nks
 
         if basis == 'cartesian':
             self._cart_list = self._path_class.ks_list
         elif basis == 'fractional':
             self._frac_list = self._path_class.ks_list
+        elif basis == 'crystal':
+            self._crystal_list = self._path_class.ks_list
         self._k_type = 'path'
         
         # FIXME I think this is fine because it is a 1-D mesh, a line in k-space
@@ -169,9 +172,11 @@ class KSpace(object):
               + self._shift_list[i] for i in range(self.d)]
               #+ self._shift_list[i]/nk_list[i] for i in range(self.d)]
         if self.basis == 'fractional':
-            self._frac_mesh = np.array( np.meshgrid(*ks, indexing='xy') ) # 'ij'
+            self._frac_mesh = np.array( np.meshgrid(*ks, indexing='ij') ) # 'xy'
         elif self.basis == 'cartesian':
-            self._cart_mesh = np.array( np.meshgrid(*ks, indexing='xy') ) # 'ij'
+            self._cart_mesh = np.array( np.meshgrid(*ks, indexing='ij') )
+        elif self.basis == 'crystal':
+            self._cyrstal_mesh = np.array( np.meshgrid(*ks, indexing='ij') )
         
     def to_mesh(self, A, A_type='kvec'): 
         # For k-space vectors
@@ -197,15 +202,19 @@ class KSpace(object):
         else:
             raise ValueError(f'shape {A.shape} of A does not match any known shape !')
     
-    def transform_ks(self, ks, to_basis):
+    def transform_ks(self, ks, to_basis, from_basis):
         # G is the recirpocal vectors in row format, so we first transpose it so that b1,b2,b3 are the columns of the matrix
         # But k_frac is also a list of vectors and is not in columns, so we first have to transpose it
         # Then, k_cart = G.T k_frac.T so it is a matrix going into a column array
         # To allow proper broadcasting for numpy we can instead do k_cart = (k_frac G ) because Ax = (x.T A.T).T
-        if to_basis == 'cartesian':
+        if (from_basis == 'fractional') and (to_basis == 'cartesian'):
             return  ks @ self._reciprocal_vectors
-        elif to_basis == 'fractional':
+        elif (from_basis == 'cartesian') and (to_basis == 'fractional'):
             return ks @ np.linalg.inv(self._reciprocal_vectors) # valid because inv(A.T).T = inv(A)
+        elif (from_basis == 'fractional') and (to_basis == 'crystal'):
+            return 2 * np.pi * ks
+        elif (from_basis == 'crystal') and (to_basis == 'fractional'):
+            return ks / (2 * np.pi)
         else:
             raise ValueError('Unrecognized coordinate system !')
     
@@ -214,6 +223,18 @@ class KSpace(object):
             return self.cart_mesh
         elif basis == 'fractional':
             return self.frac_mesh
+        elif basis == 'crystal':
+            return self.crystal_mesh
+        else:
+            raise ValueError('Unrecognized coordinate system !')
+    
+    def klist(self, basis):
+        if basis == 'cartesian':
+            return self.cart_list
+        elif basis == 'fractional':
+            return self.frac_list
+        elif basis == 'crystal':
+            return self.crystal_list
         else:
             raise ValueError('Unrecognized coordinate system !')
 
@@ -261,7 +282,7 @@ class KSpace(object):
     def frac_list(self):
         if not hasattr(self,'_frac_list') and (hasattr(self,'_cart_list') or hasattr(self,'_cart_mesh')):
             # k_frac = G^-1 k_cart
-            self._frac_list = self.transform_ks(self._cart_list, to_basis='fractional')
+            self._frac_list = self.transform_ks(self.cart_list, to_basis='fractional', from_basis='cartesian')
         if not hasattr(self,'_frac_list'):
             self._frac_list = self.to_list(self.frac_mesh)
         return self._frac_list
@@ -275,13 +296,21 @@ class KSpace(object):
     @property 
     def cart_list(self):
         if not hasattr(self,'_cart_list') and (hasattr(self,'_frac_list') or hasattr(self,'_frac_mesh')):
-            self._cart_list = self.transform_ks(self.frac_list, to_basis='cartesian')
+            self._cart_list = self.transform_ks(self.frac_list, to_basis='cartesian', from_basis='fractional')
         elif not hasattr(self,'_cart_list') and hasattr(self,'_cart_mesh'):
             self._cart_list = self.to_list(self.cart_mesh)
         return self._cart_list
-
+    
     @property 
     def cart_mesh(self):
         if not hasattr(self,'_cart_mesh'):
             self._cart_mesh = self.to_mesh(self.cart_list)
         return self._cart_mesh
+    
+    @property
+    def crystal_list(self):
+        return self.transform_ks(self.frac_list, to_basis='crystal', from_basis='fractional')
+
+    @property
+    def crystal_mesh(self):
+        return self.to_mesh(self.crystal_list)

@@ -41,9 +41,21 @@ def lieb_kagome_kin(kspace_class, t=1, a=1, delta=0):
     return kspace_class.to_mesh(Hks, A_type='array')
 
 # Define the square Bravais lattice
-a = 1
-lattice_vectors = [[2.0*a, 0.0], [-1.0*a, np.sqrt(3)*a]]
+a1 = np.array([2.0, 0.0])
+a2 = np.array([-1.0, np.sqrt(3)])
+lattice_vectors = [a1, a2]
 frac_high_symmetry_points = {'$\Gamma$':[0,0], '$M$':[1.0/2.0,0], '$K$':[1.0/3.0,1.0/3.0], '$\Gamma$@':[0,0]}
+
+# Position of lattice sites
+qA = a1 - a1
+qB = 0.5 * a1
+qC = 0.5 * a2
+qD = 0.25 * a2
+qE = 0.75 * a2
+qF = 0.25 * a1
+qG = 0.75 * a1
+qH = 0.75 * a2 + 0.25 * a1
+qI = 0.25 * a2 + 0.75 * a1
 
 # The parameters for the lieb lattice
 tb_parameters = dict(delta=0) # 0.3
@@ -69,40 +81,44 @@ frac_tb.plot_contour(band=-1, basis='fractional')
 frac_tb.plot_surface(basis='fractional')
 
 # Calculate the topology properties of the flat bands in the middle
-top = Topology(tb=frac_tb, subspace=[3,4,5])
+subspace = [0,1,2,3,4,5]
+top = Topology(tb=frac_tb, subspace=subspace)
 print(f'Chern number = {top.chern_number()}')
 print(f'metric number = {top.metric_number()}')
 
 # Plot the xx elements of the geometric tensor
 top.plot_contour(function=top.quantum_metric, label='$g$')
-top.plot_colormesh(function=top.quantum_metric, label='$g$')
+#top.plot_colormesh(function=top.quantum_metric, label='$g$')
 top.plot_contour(function=top.berry_curvature, label='$\Omega$')
-top.plot_colormesh(function=top.berry_curvature, label='$\Omega$')
+#top.plot_colormesh(function=top.berry_curvature, label='$\Omega$')
+
+# FIXME work out V
+# Is this the order Miriam put them in corresponding to h_k?
+q = [qA, qB, qC, qD, qE, qF, qG, qH, qI]
+V = np.zeros([len(q),len(q)], dtype=np.complex_)
+for i in range(len(q)):
+    G = top._kspace.reciprocal_vectors[0] # FIXME what should this be?
+    V[i,i] = np.exp(1j * G @ q[i])
 
 # Calculate Wilson loops
 subspace = [0,1,2,3,4,5]
 #subspace = [0,1,2]
-subspace = [3,4,5]
-#subspace = [0,1,2,3,4,5,6,7,8]
+#subspace = [3,4,5]
 w_top = Topology(tb=frac_tb, subspace=subspace)
-#kx = (w_top._kspace.reciprocal_vectors[0] + w_top._kspace.reciprocal_vectors[1])[0]
-#ky = (w_top._kspace.reciprocal_vectors[0] + w_top._kspace.reciprocal_vectors[1])[1]
-k2 = np.linspace(0,1,100)
-#k2 = np.linspace(0,2*np.pi,100)
-#k2 = np.linspace(0,ky,100)
-#k2 = np.linspace(0,kx,100)
+k2 = np.linspace(-0.5,0.5,100)
 W = np.empty(shape=(len(k2), len(subspace), len(subspace)), dtype=np.complex_)
 for i,k in enumerate(k2):
-    W[i,...] = w_top.wilson_path(n_points=100, path={'0':[0,k], '2pi':[1,k]})
-    #W[i,...] = w_top.wilson_path(n_points=10000, path={'0':[k,0], '2pi':[k,1]})
-    #W[i,...] = w_top.wilson_path(n_points=10000, path={'0':[k,0], '2pi':[k,3.62759873]}, basis='cartesian')
-    #W[i,...] = w_top.wilson_path(n_points=10000, path={'0':[0,k], '2pi':[kx,k]}, basis='cartesian')
-    #W[i,...] = w_top.wilson_path(n_points=10000, path={'0':[k,0], '2pi':[k,ky]}, basis='cartesian')
+    W[i,...] = w_top.wilson_path(n_points=100, path={'0':[0,k], '2pi':[1,k]}, V=V)
+    #W[i,...] = w_top.wilson_path(n_points=100, path={'0':[k,0], '2pi':[k,1]}, V=V)
 
 e, v = np.linalg.eig(W)
-#wannier_centers = np.sort(np.angle(e), axis=-1) / (2*np.pi)
-wannier_centers = np.sort(-np.log(e).imag, axis=-1) / (2*np.pi)
+wannier_centers = np.sort(np.angle(e), axis=-1) / (2*np.pi)
 
 import matplotlib.pyplot as plt
-plt.plot(k2, wannier_centers, 'o', color='black')
+fig, ax = plt.subplots()
+ax.plot(k2, 2*wannier_centers, 'o')
+ax.set_ylim([-1, 1])
+ax.set_xlim([min(k2), max(k2)])
+ax.set_xlabel(r'$k_2 / \pi$')
+ax.set_ylabel(r'$\mathcal{v} / \pi$')
 plt.show()

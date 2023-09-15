@@ -4,7 +4,9 @@ from band_topology.meshes.kspace import KSpace
 from band_topology.models.tightbinding import TightBinding
 from band_topology.topology import Topology
     
-def honeycomb_kin(kspace_class, t=1, Delta=0, t2=0): #Delta=0.2, t2=0, 0.12, 0.3
+def h_k(kspace_class, t=1, Delta=0, t2=0): #Delta=0.2, t2=0, 0.12, 0.3
+    ks = kspace_class.klist('cartesian')
+
     a1 = kspace_class.lattice_vectors[0]
     a2 = kspace_class.lattice_vectors[1]
     a3 = -(a1+a2)
@@ -15,7 +17,7 @@ def honeycomb_kin(kspace_class, t=1, Delta=0, t2=0): #Delta=0.2, t2=0, 0.12, 0.3
     ns = [n1, n2, n3]
     gammaks = 0
     for n in ns:
-        gammaks += np.exp( 1j * kspace_class.cart_list @ n )
+        gammaks += np.exp( 1j * ks @ n )
 
     # FIXME these must be wrong because the parameters are wrong for the critical point when chern != 0
     m1 = n2 - n3
@@ -24,7 +26,7 @@ def honeycomb_kin(kspace_class, t=1, Delta=0, t2=0): #Delta=0.2, t2=0, 0.12, 0.3
     ms = [m1, m2, m3]
     alphaks = 0
     for m in ms:
-        alphaks += np.sin(kspace_class.cart_list @ m )
+        alphaks += np.sin(ks @ m )
 
     orb_dim = 2
     Hks = np.zeros(shape=(kspace_class.nks, orb_dim, orb_dim), dtype=np.complex_)
@@ -35,7 +37,13 @@ def honeycomb_kin(kspace_class, t=1, Delta=0, t2=0): #Delta=0.2, t2=0, 0.12, 0.3
     return kspace_class.to_mesh(Hks, A_type='array')
 
 # Define the hexagonal Bravais lattice
-lattice_vectors = [[-1.0/2.0, np.sqrt(3)/2.0], [-1.0/2.0, -np.sqrt(3)/2.0]]
+a1 = np.array([-1.0/2.0, np.sqrt(3)/2.0])
+a2 = np.array([-1.0/2.0, -np.sqrt(3)/2.0])
+lattice_vectors = [a1, a2]
+
+# Position of lattice sites
+qa = (a1 + a2) / 3.0
+qb = 2.0 * (a1 + a2) / 3.0
 
 # The parameters for the Haldane model to be a Chern insulator
 tb_parameters = dict(Delta=0.2, t2=0.3)
@@ -43,7 +51,7 @@ tb_parameters = dict(Delta=0.2, t2=0.3)
 # Define the meshgrid and tight-binding model for a visualization of the band structure
 kspace = KSpace(lattice_vectors=lattice_vectors)
 kspace.monkhorst_pack(nk_list=60, basis='cartesian', domain=[-2*np.pi,2*np.pi])
-tb = TightBinding(Hks_fnc=honeycomb_kin, kspace_class=kspace, tb_parameters=tb_parameters)
+tb = TightBinding(Hks_fnc=h_k, kspace_class=kspace, tb_parameters=tb_parameters)
 tb.plot_contour(band=0)
 tb.plot_surface()
 
@@ -53,17 +61,17 @@ tb.plot_surface()
 frac_high_symmetry_points = {'$\Gamma$':[0,0], '$M$':[1.0/2.0,0], '$K$':[1.0/3.0,1.0/3.0], '$\Gamma$@':[0,0]}
 path_kspace = KSpace(lattice_vectors=lattice_vectors)
 high_symmetry_points = dict()
-for key,val in frac_high_symmetry_points.items():
-    high_symmetry_points[key] = path_kspace.transform_ks(val, to_basis='cartesian')
-path_kspace.path(special_points=high_symmetry_points, basis='cartesian')
-#path_kspace.path(special_points=frac_high_symmetry_points, basis='fractional') # Can use either basis, same answer
-path_tb = TightBinding(Hks_fnc=honeycomb_kin, kspace_class=path_kspace, tb_parameters=tb_parameters)
+#for key,val in frac_high_symmetry_points.items():
+#    high_symmetry_points[key] = path_kspace.transform_ks(val, to_basis='cartesian', from_basis='fractional')
+#path_kspace.path(special_points=high_symmetry_points, basis='cartesian')
+path_kspace.path(special_points=frac_high_symmetry_points, basis='fractional') # Can use either basis, same answer
+path_tb = TightBinding(Hks_fnc=h_k, kspace_class=path_kspace, tb_parameters=tb_parameters)
 path_tb.plot_path()
 
 # Redefine on a mesh in fractional coordinates corresponding to the a single BZ
 frac_kspace = KSpace(lattice_vectors=lattice_vectors)
 frac_kspace.monkhorst_pack(nk_list=60)
-frac_tb = TightBinding(Hks_fnc=honeycomb_kin, kspace_class=frac_kspace, tb_parameters=tb_parameters)
+frac_tb = TightBinding(Hks_fnc=h_k, kspace_class=frac_kspace, tb_parameters=tb_parameters)
 frac_tb.plot_contour()
 frac_tb.plot_surface()
 
@@ -76,22 +84,32 @@ print(f'metric number = {top.metric_number()}')
 # Plot the xy elements of the geometric tensor
 top.plot_contour(function=top.quantum_metric, label='$g$')
 top.plot_contour(function=top.berry_curvature, label='$\Omega$')
-top.plot_colormesh(function=top.quantum_metric, label='$g$')
-top.plot_colormesh(function=top.berry_curvature, label='$\Omega$')
+#top.plot_colormesh(function=top.quantum_metric, label='$g$')
+#top.plot_colormesh(function=top.berry_curvature, label='$\Omega$')
 
 # Calculate Wilson loops
 k2 = np.linspace(-0.5, 0.5, 100)
-#k2 = np.linspace(0,7.25519746,100)
+
+# FIXME work out V
+q = [qa, qb]
+V = np.zeros([len(q),len(q)], dtype=np.complex_)
+for i in range(len(q)):
+    G = top._kspace.reciprocal_vectors[0]
+    V[i,i] = np.exp(1j * G @ q[i])
 
 W = np.empty(shape=(len(k2), len(subspace), len(subspace)), dtype=np.complex_)
 for i,k in enumerate(k2):
-    W[i,...] = top.wilson_path(n_points=100, path={'-pi':[-0.5,k], 'pi':[0.5,k]})
-    #W[i,...] = top.wilson_path(n_points=10000, path={'0':[0,k], '2pi':[-12.56637061,k]}, basis='cartesian')
+    W[i,...] = top.wilson_path(n_points=100, path={'0':[0,k], '2pi':[1,k]}, V=V)
+    #W[i,...] = top.wilson_path(n_points=100, path={'0':[0,k], '2pi':[1,k]}) # FIXME does it need V here?
 
 e, v = np.linalg.eig(W)
-#wannier_centers = np.sort(np.angle(e), axis=-1) / (2*np.pi)
-wannier_centers = np.sort(-np.log(e).imag, axis=-1) / (2*np.pi)
+wannier_centers = np.sort(np.angle(e), axis=-1) / (2*np.pi)
 
 import matplotlib.pyplot as plt
-plt.plot(k2, 2*wannier_centers, 'o', color='black')
+fig, ax = plt.subplots()
+ax.plot(k2, 2*wannier_centers, 'o', color='black')
+ax.set_ylim([-1, 1])
+ax.set_xlim([min(k2), max(k2)])
+ax.set_xlabel(r'$k_2 / \pi$')
+ax.set_ylabel(r'$\mathcal{v} / \pi$')
 plt.show()
